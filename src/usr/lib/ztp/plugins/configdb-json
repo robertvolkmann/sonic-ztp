@@ -2,6 +2,7 @@
 '''
 Copyright 2019 Broadcom. The term "Broadcom" refers to Broadcom Inc.
 and/or its subsidiaries.
+Modifications copyright (C) 2023 robert.volkmann@x-cellent.com
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,20 +17,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
-import sys
-import os
-import fcntl
-import select
-import time
-import stat
-import traceback
 import json
-from swsscommon.swsscommon import ConfigDBConnector
+import os
+import sys
 
+from portconfig import get_child_ports
+from sonic_py_common import device_info
+from swsscommon.swsscommon import ConfigDBConnector
+from ztp.Logger import logger
+from ztp.ZTPLib import runCommand, getField, isString, updateActivity
 from ztp.ZTPObjects import URL, DynamicURL
 from ztp.ZTPSections import ConfigSection
-from ztp.ZTPLib import runCommand, getField, isString, updateActivity
-from ztp.Logger import logger
+
 
 class ConfigDBJson:
 
@@ -114,6 +113,23 @@ class ConfigDBJson:
                 else:
                    json_dict['DEVICE_METADATA'] = { 'localhost' : new_localhost_data }
 
+            if json_dict.get("BREAKOUT_CFG") is not None:
+                breakout_cfg_file = device_info.get_path_to_port_config_file()
+                ports = json_dict.get("PORT") if json_dict.get("PORT") is not None else dict()
+
+                for port_name, port_cfg in json_dict.get("BREAKOUT_CFG").items():
+                    if port_cfg.get("brkout_mode") is not None:
+                        children = get_child_ports(port_name, port_cfg.get("brkout_mode"), breakout_cfg_file)
+
+                        if children is not None:
+                            for child_name, child_cfg in children.items():
+                                if ports.get(child_name) is not None:
+                                    ports[child_name].update(child_cfg)
+                                else:
+                                    ports[child_name] = child_cfg
+
+                json_dict["PORT"] = ports
+
             with open(config_file, 'w') as outfile:
                 json.dump(json_dict, outfile, indent=4, sort_keys=True)
                 outfile.flush()
@@ -172,7 +188,7 @@ class ConfigDBJson:
             self.__clear_config = getField(section_data, 'clear-config', bool, default_value=True)
             self.__save_config = getField(section_data, 'save-config', bool, default_value=False)
             self.__overwrite_device_metadata = getField(section_data, 'overwrite-device-metadata', bool, default_value=False)
-            
+
         except Exception as e:
             self.__bailout(str(e))
 
